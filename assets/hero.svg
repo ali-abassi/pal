@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="250" viewBox="0 0 1080 250" role="img" aria-labelledby="title desc">
+<title id="title">One lead. Focused helpers. Reviewed work.</title>
+<desc id="desc">Your strongest model plans the work, selected cheaper models execute bounded tasks in separate sessions, and the lead inspects, tests, and fixes the result.</desc>
+<rect width="1080" height="250" rx="20" fill="#0d1117"/>
+<g font-family="-apple-system, BlinkMacSystemFont, Segoe UI, sans-serif">
+<rect x="28" y="28" width="306" height="170" rx="14" fill="#161b22" stroke="#30363d"/>
+<rect x="387" y="28" width="306" height="170" rx="14" fill="#161b22" stroke="#30363d"/>
+<rect x="746" y="28" width="306" height="170" rx="14" fill="#161b22" stroke="#30363d"/>
+<path d="M345 112h29m-8-8 8 8-8 8M704 112h29m-8-8 8 8-8 8" fill="none" stroke="#57dfd0" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+<g fill="#57dfd0" font-size="13" font-weight="700" letter-spacing="2"><text x="52" y="61">01 / LEAD</text><text x="411" y="61">02 / DELEGATE</text><text x="770" y="61">03 / VERIFY</text></g>
+<g fill="#f0f6fc" font-size="26" font-weight="650"><text x="52" y="103">Keep the big picture.</text><text x="411" y="103">Give helpers a job.</text><text x="770" y="103">Own the result.</text></g>
+<g fill="#a8b6c5" font-size="17"><text x="52" y="139">Your strongest model plans.</text><text x="52" y="164">You choose when to delegate.</text><text x="411" y="139">Separate sessions. Clear scope.</text><text x="411" y="164">Choose models to fit the work.</text><text x="770" y="139">The lead reviews and tests.</text><text x="770" y="164">Fix or reject what falls short.</text></g>
+<text x="540" y="229" text-anchor="middle" fill="#a8b6c5" font-size="14">A workflow you control. PAL preserves the conversations; review remains your responsibility.</text>
+</g></svg>

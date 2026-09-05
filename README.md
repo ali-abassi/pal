@@ -1,81 +1,81 @@
-# PAL
+<div align="center">
 
-Persistent conversations with coding agents, from your terminal or an MCP client.
+<img src="assets/pal.png" width="112" height="112" alt="PAL: a glowing glass companion holding three little lights">
 
-PAL wraps **Codex CLI**, **Claude Code**, and **Pi**. Start a named session, send follow-ups to the same backend-native conversation, inspect what happened, and collect results from background work. Python standard library only; no hosted PAL service or additional API key.
+# Put your best model in charge.
 
-**PAL launches agents with broad local authority.** Codex bypasses approval prompts and its sandbox; Claude skips permission checks; Pi runs with its configured tools. A working directory or Git worktree is not a security sandbox. Use trusted tasks in an environment where the agent is authorized to operate. Backend usage is billed or metered by your existing provider/account.
+**Let your strongest AI plan and review. Give cheaper models the focused work.<br/>PAL connects them through persistent conversations in Codex, Claude Code, and Pi.**
 
-## Install
+[Quickstart](#quickstart) · [How it works](#how-it-works) · [Commands](#commands) · [Full guide](docs/usage.md)
 
-Requires Python 3.10+, Git, and at least one installed, authenticated backend CLI on `PATH`. PAL uses POSIX file locks and process groups: macOS and Linux are the intended platforms; native Windows is unsupported. The `gc` command requires macOS with Xcode's `xcrun simctl`.
+<img src="assets/hero.svg" width="100%" alt="Your strongest model plans. Helpers work in separate sessions. The lead reviews, tests, and fixes the result. PAL preserves conversations; review remains your responsibility.">
+
+</div>
+
+## More focus for the work that matters
+
+Your best model doesn't need every search result, command log, and routine edit in its conversation. And you shouldn't have to restart a helper from scratch every time something needs fixing.
+
+PAL lets your lead agent hand off a clear job, get the result, inspect the evidence, and send corrections back to **the same helper, in the same conversation**.
+
+- **Keep the main conversation focused.** Helpers work in separate sessions. Retrieve their replies and inspect detailed logs when needed.
+- **Choose where to spend.** Use cheaper models for suitable work and reserve your strongest model for judgment. You choose the models; PAL doesn't route automatically.
+- **Keep ownership of quality.** Review the changes, check the behavior, and send weak work back for correction.
+
+Savings and quality depend on task scope, model choice, review, and retries. PAL enables this workflow; it does not guarantee an improvement or enforce a spending limit.
+
+## Quickstart
+
+**Try PAL without an API key or model call.** Requires Git and Python 3.10+. Run this in a directory where you want the checkout:
 
 ```sh
 git clone https://github.com/ali-abassi/pal.git
 cd pal
-python3 pal.py --help
-
-# Optional: expose the CLI on PATH. This fails rather than overwriting an existing pal.
-mkdir -p "$HOME/.local/bin"
-ln -s "$PWD/pal.py" "$HOME/.local/bin/pal"
-export PATH="$HOME/.local/bin:$PATH"
+export PAL_HOME="$(mktemp -d)"
+python3 pal.py ls
 ```
 
-Keep the checkout in place while using the symlink. You can also always run `python3 /absolute/path/to/pal/pal.py` directly.
+Actual output from a fresh session directory:
 
-## Start and continue a session
-
-```sh
-pal start codex -n implementation -C /absolute/path/to/repo --bg \
-  "Implement the requested change and verify its behavior."
-pal wait implementation --timeout 60
-pal log implementation
-pal diff implementation --full
-pal say implementation "Fix the identified regression and rerun the focused check."
-pal read implementation --all
-pal status implementation
+```text
+no sessions
 ```
 
-`start` creates a session; `say` resumes its native thread. Codex's thread ID comes from structured backend events. Pi uses a separate session store. Claude starts with an explicit UUID and resumes it on later turns. PAL rejects a reported session-ID mismatch.
+This lists an empty local workspace; it doesn't start an agent or incur model usage. The example uses a disposable state directory. For normal use, unset `PAL_HOME` to use `~/.pal`, or choose a persistent location.
 
-Use `-m MODEL` and `--effort LEVEL` to choose settings supported by your installed backend and account. PAL does not choose an optimal model or verify a model's self-description. Without an override, Codex/Pi use their configured defaults and Claude defaults to `sonnet`.
+For real delegation, install and authenticate a backend CLI, then follow the [session walkthrough](docs/usage.md#start-and-continue-a-session). Backend calls use your account and can consume credits or incur charges.
 
-```sh
-pal start claude -n review -C /absolute/path/to/repo "Review the specified change."
-pal start pi -n investigation -C /absolute/path/to/repo "Investigate the specified failure."
-```
+## How it works
 
-Pi's optional `--agent NAME` reads a Markdown role from `PAL_PI_AGENTS_DIR`; no private or predefined roles are bundled. Claude's `--agent` uses a custom agent already configured in Claude Code.
+1. **The lead defines the job.** Choose a backend, model, repository, and bounded outcome. Delegation starts when you ask for it.
+2. **A helper works in its own session.** PAL preserves its native conversation, replies, command activity, and errors. Optional Git worktrees separate edits.
+3. **The lead owns the result.** Inspect actual files and behavior, not just a “done” message. Continue the helper's conversation to fix problems, or reject the work.
 
-## Isolated edits and background work
+For example: your strongest model plans a refactor, a cheaper model handles a repetitive edit, and the lead inspects the integrated diff and runs the relevant checks. That division of work is something you direct, not an automatic quality gate.
 
-```sh
-pal start codex -n worker-a -C /absolute/path/to/repo \
-  --worktree feature/worker-a --bg "Complete the first independent task."
-pal wait worker-a worker-b --timeout 60
-pal ls --tree
-pal stop worker-a
-```
+## Commands
 
-The `wait` example assumes both named sessions already exist. A timeout stops waiting, not the agent. Exit 124 means work remains running; inspect it or use `stop`. Completed errors return nonzero; stopped work returns 130 from a waiting command.
+After [adding `pal` to your PATH](docs/usage.md#install):
 
-Worktrees live under `$PAL_HOME/worktrees/<session>` by default. For a new branch PAL fetches origin and uses `origin/main` if available, otherwise `HEAD`. Existing branches are reused. Choose the source state deliberately; uncommitted source changes are not copied into a new worktree.
+| You want to… | Use |
+|---|---|
+| Give a helper a job | `pal start codex -n helper -C /path/to/repo "Your task"` |
+| Choose its model | Add `-m MODEL --effort LEVEL` supported by your backend |
+| Keep working while it runs | Add `--bg`, then `pal wait helper --timeout 60` |
+| See what it actually did | `pal log helper` and inspect the repository |
+| Review changes | `pal diff helper --full`, plus staged, committed, and untracked changes |
+| Ask it to fix something | `pal say helper "Fix the identified problem"` |
+| Read the conversation | `pal read helper --all` |
+| Inspect status and usage | `pal status helper` |
+| Stop the current turn | `pal stop helper` |
 
-`pal rm NAME` deletes session history but keeps its worktree. `pal rm NAME --worktree` also removes a clean recorded worktree; `--force` permits removing a dirty one. Stopping an agent cannot reverse external actions it already performed.
+These are usage examples, not benchmark receipts. The [full guide](docs/usage.md) covers worktrees, model settings, state, pricing, and cleanup.
 
-## MCP setup
+## Connect your AI client
 
-The bundled stdio MCP server invokes the adjacent `pal.py` with the same Python interpreter, so it does not depend on a separate `pal` installation or your original skill directories.
+The included MCP server lets a compatible client call PAL's tools directly. It runs locally and invokes the adjacent CLI. There is no hosted PAL service.
 
-From the cloned repository:
-
-```sh
-# Choose the client you use. These commands change that client's MCP configuration.
-codex mcp add pal -- python3 "$PWD/mcp_server.py"
-claude mcp add --scope user pal -- python3 "$PWD/mcp_server.py"
-```
-
-For clients accepting JSON configuration:
+Follow the [Codex and Claude setup instructions](docs/usage.md#mcp-setup). For clients accepting this configuration shape:
 
 ```json
 {
@@ -88,57 +88,46 @@ For clients accepting JSON configuration:
 }
 ```
 
-Tools: `pal_start`, `pal_say`, `pal_wait`, `pal_read`, `pal_log`, `pal_diff`, `pal_list`, `pal_status`, and `pal_stop`. Start long work with `wait: false`, then poll with bounded `pal_wait` calls. Blocking MCP waits are capped at 540 seconds; timeout leaves the backend running. Tool calls run in separate threads, so a wait does not serialize all client requests.
+Recommended instruction for your lead agent:
 
-## Recommended agent instruction
+> Do the task yourself by default. Use PAL only when I explicitly request delegation or orchestration. You own the result: inspect the complete changes, verify behavior, and fix or reject deficient work. A helper's completion message is not acceptance.
 
-Add this to your own `AGENTS.md` or `CLAUDE.md` if you want explicit control over delegation:
+## When PAL earns its place
 
-> Do the task yourself by default. Use PAL only when the user explicitly requests delegation or agent orchestration for this task. Remain accountable for delegated work: inspect the complete candidate, verify behavior, and fix or reject deficient output. A completion message is not acceptance.
+Use it when you want persistent helpers, deliberate model selection, or independent work in separate sessions. Skip delegation when the handoff costs more than doing the work directly.
 
-PAL does not mechanically enforce this instruction, code review, merge approval, credit budgets, or concurrency limits. It caps nested delegation depth at two and records parent/session identity. Review `git status`, staged and unstaged diffs, committed changes, and untracked files as appropriate: `pal diff --full` alone is not a complete acceptance check.
+**A single Codex, Claude Code, or Pi session** is simpler for tightly connected work. **Your client's built-in subagents** may be enough when you don't need PAL's CLI, cross-backend sessions, or resumable named handles. PAL adds those handles; it doesn't make the underlying model smarter.
 
-## State and configuration
+## Under the hood
 
-| Variable | Default | Purpose |
-|---|---|---|
-| `PAL_HOME` | `~/.pal` | Session metadata, prompts, events, replies, transcripts, archive, and price table |
-| `PAL_WORKTREE_ROOT` | `$PAL_HOME/worktrees` | Managed Git worktrees |
-| `PAL_TMP_ROOT` | `$PAL_HOME/tmp` | Temporary directories considered by cleanup |
-| `PAL_PI_AGENTS_DIR` | `~/.pi-x/agent/agents` | Optional Pi Markdown roles |
+- Python standard library; no additional Python dependencies.
+- Backend-native session IDs and reported ID mismatch detection.
+- Detached runners, explicit stop commands, and bounded waits.
+- Local event logs, replies, and metadata under `PAL_HOME`.
+- Optional worktrees, parent/child records, and a nesting depth cap of two.
+- Backend-reported usage where available; optional price estimates, not subscription-credit accounting.
 
-Runtime records can contain source code, prompts, command output, and other sensitive material. Keep them private and out of Git. Authenticate through the backend CLIs; PAL inherits their environment and does not supply credentials.
+## What is verified
 
-Codex token usage comes from backend events. Optional `$PAL_HOME/prices.json` supplies your own current USD-per-million-token rates:
+The initial public export passed focused synthetic checks for worktree creation, Codex usage reporting, session continuation, and MCP discovery/listing on macOS with Python 3.14.7. This README's no-model quickstart was also run from a fresh checkout. These are local checks, not live-model benchmarks or a CI badge.
 
-```json
-{
-  "your-model-id": {
-    "placeholder": true,
-    "input_usd_per_million": 0,
-    "cached_input_usd_per_million": 0,
-    "output_usd_per_million": 0
-  }
-}
-```
+| Integration | Evidence and boundary |
+|---|---|
+| Codex | Synthetic session and usage checks passed. Live model execution not retested for this release. |
+| Claude Code and Pi | CLI adapters included. Live compatibility not retested for this release. |
+| MCP | Local stdio discovery/listing checked. Every client version is not certified. |
+| Platforms | macOS checked. Linux intended but unverified. Native Windows unsupported. |
 
-Replace the placeholder with verified rates and set `placeholder` to `false` to enable estimation. Missing or placeholder rates produce unknown cost. Cached input is part of input, not additional input. Estimated dollars are not subscription credits.
+No measured credit savings or quality uplift is claimed. Backend flags and event formats can change. [Tests and verification limits](docs/usage.md#development-and-verification).
 
-`pal ls` shows recent sessions plus running work; `--all` includes older sessions. `pal archive --older-than 2 --dry-run` previews moving old idle/stopped sessions into the archive.
+## Permissions and limits
 
-**Cleanup:** inspect `pal gc --dry-run` before using `gc`. It considers simulator names starting with `pal-` and temporary directory names ending in `-dd` or containing `prior-art`; it protects recorded running sessions and Git worktrees. Name-based matching is not proof of ownership. Do not point `PAL_TMP_ROOT` at a shared temporary directory. No cleanup runs automatically.
+**PAL launches agents with broad local authority.** Codex bypasses approval prompts and its sandbox; Claude skips permission checks; Pi runs with its configured tools. A working directory or Git worktree is not a security sandbox. Use trusted tasks in an environment where the agent is authorized to operate.
 
-## Development and verification
+Runtime records may contain private code, prompts, and command output. Keep them out of Git. PAL inherits backend credentials and environment; it does not supply authentication. A timeout stops waiting, not the agent. Stopping an agent cannot reverse external actions already performed.
 
-The focused checks use synthetic Codex events and temporary directories; they make no paid model calls:
+PAL is an early independent project, not an official OpenAI, Anthropic, or Pi product. It does not enforce review, merge approval, credit budgets, or fleet concurrency. Cleanup is manual and name-based; read the [cleanup limits](docs/usage.md#state-and-configuration) before using it. `gc` requires macOS/Xcode.
 
-```sh
-python3 -m unittest discover -s tests -p test_pal.py -k test_worktree_path_and_branch_creation
-python3 -m unittest discover -s tests -p test_pal.py -k test_codex_usage_tokens_and_unknown_cost
-python3 -m unittest discover -s tests -p test_pal.py -k test_native_session_continuation
-python3 -m unittest discover -s tests -p test_pal.py -k test_mcp_discovery_and_listing
-```
+## Project
 
-This initial public export was checked on macOS with Python 3.14.7. These checks establish the exercised PAL behavior, not compatibility with every backend version, live model, or Linux environment. Backend CLI flags and event formats can change. Report failures with CLI/Python versions and sanitized reproduction details; do not upload private sessions.
-
-MIT licensed. This is an independent project, not an official OpenAI, Anthropic, or Pi product.
+[Usage and configuration](docs/usage.md) · [Report an issue](https://github.com/ali-abassi/pal/issues) · [MIT license](LICENSE)
