@@ -248,6 +248,7 @@ class SharedCliTests(unittest.TestCase):
         prompt = (self.home / "sessions" / "one" / "turns" / "002.prompt.md").read_text()
         self.assertIn(shared.digest("new"), prompt)
         self.assertIn("read-only worker", prompt)
+        self.assertIn("critically review", prompt)
         self.assertEqual(self.meta("one")["backend_session_id"], "codex-test-thread")
         self.assertEqual(self.run_pal("shared", "release", "one", "-C", str(self.repo)).returncode, 0)
         self.assertNotEqual(self.run_pal("say", "one", "again").returncode, 0)
