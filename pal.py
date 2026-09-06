@@ -2,7 +2,7 @@
 """pal — persistent, resumable back-and-forth sessions with other coding agents.
 
 Backends: codex (OpenAI Codex CLI), pi (pi coding agent), claude (Claude Code).
-Every backend runs in full-autonomy ("yolo") mode: no approval prompts, no sandbox.
+Classic sessions run in full-autonomy mode. Opt-in shared sessions have a macOS write guard.
 
 State lives in $PAL_HOME (default ~/.pal):
   sessions/<name>/meta.json          session record + turn index
@@ -28,6 +28,8 @@ import time
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+import shared_workspace as shared
 
 PAL_HOME = Path(os.environ.get("PAL_HOME", Path.home() / ".pal"))
 SESSIONS = PAL_HOME / "sessions"
@@ -554,7 +556,7 @@ def run_backend(meta: dict, paths: dict[str, Path], prompt: str) -> tuple[int, f
     try:
         rc = launch_backend(meta, paths, prompt)
         return rc, time.time() - started
-    except OSError as error:
+    except (OSError, shared.SharedError) as error:
         paths["events"].touch()
         paths["stderr"].write_text(f"{error}\n")
         return 127, time.time() - started
@@ -564,6 +566,8 @@ def launch_backend(meta: dict, paths: dict[str, Path], prompt: str) -> int:
     command, prompt_via = BUILDERS[meta["backend"]](meta, paths)
     if prompt_via == "argv":
         command.append(prompt)
+    if meta.get("shared"):
+        command = shared.sandbox_command(meta, PAL_HOME, command)
     with paths["events"].open("w") as out, paths["stderr"].open("w") as err:
         proc = launch_registered_backend(meta, command, prompt_via, out, err)
         communicate_prompt(proc, prompt if prompt_via == "stdin" else None)
@@ -718,8 +722,12 @@ def spawn_runner(name: str, n: int) -> int:
 
 
 def begin_turn(name: str, prompt: str) -> int:
-    with edit_meta(name) as meta:
+    coordinator = shared.Coordinator(PAL_HOME)
+    with coordinator.locked(), edit_meta(name) as meta:
+        coordinator.check_turn(meta)
         reject_running_session(meta)
+        if meta.get("shared"):
+            prompt = coordinator.prompt(meta, prompt)
         n = len(meta["turns"]) + 1
         paths = turn_paths(name, n)
         paths["prompt"].parent.mkdir(exist_ok=True)
@@ -879,6 +887,7 @@ def report_after_wait(meta: dict, n: int, as_json: bool) -> None:
 # ---------- commands ----------
 
 def cmd_start(args: argparse.Namespace) -> None:
+    validate_shared_options(args)
     cwd = resolve_cwd(args.cwd)
     name = resolve_new_session_name(args.name, args.backend)
     validate_start_agent(args.backend, args.agent)
@@ -890,13 +899,73 @@ def cmd_start(args: argparse.Namespace) -> None:
             die("--worktree requires -C REPO")
         repo = cwd
         cwd = create_worktree(repo, name, args.worktree)
-    if not args.no_brief:
+    if not (args.no_brief or args.shared):
         prompt = BRIEF.format(cwd=cwd) + prompt
     meta = new_session_meta(args, name, cwd, repo, parent, depth)
-    session_dir(name).mkdir(parents=True)
-    save_meta(meta)
+    register_session(meta, args, prompt)
     n = begin_turn(name, prompt)
     report_or_background(meta, n, args)
+
+
+def validate_shared_options(args: argparse.Namespace) -> None:
+    shared.require(not (args.shared and args.worktree), "--shared and --worktree are mutually exclusive")
+    shared.require(not args.files or args.shared, "--files requires --shared")
+    if args.shared:
+        shared.lead_only()
+        shared.require(bool(args.files), "--shared requires --files PATH")
+
+
+def register_session(meta: dict, args: argparse.Namespace, prompt: str) -> None:
+    coordinator = shared.Coordinator(PAL_HOME)
+    if args.shared:
+        meta["cwd"] = str(shared.git_path(meta["cwd"], "--show-toplevel"))
+        meta.update(shared=True, shared_git=str(shared.git_path(meta["cwd"], "--git-common-dir")))
+        shared.require(not PAL_HOME.resolve().is_relative_to(Path(meta["cwd"])),
+                       "PAL_HOME must be outside the shared checkout")
+        shared.preflight(meta, PAL_HOME)
+    with coordinator.locked():
+        shared.require(not session_dir(meta["name"]).exists(), "session already exists")
+        if args.shared:
+            coordinator.reserve(meta, args.files, prompt)
+        else:
+            coordinator.check_turn(meta)
+        session_dir(meta["name"]).mkdir(parents=True)
+        save_meta(meta)
+
+
+def cmd_shared(args: argparse.Namespace) -> None:
+    coordinator = shared.Coordinator(PAL_HOME)
+    repo = str(shared.git_path(resolve_cwd(args.cwd), "--show-toplevel"))
+    if args.action == "board":
+        print(json.dumps(coordinator.board(repo), indent=2))
+        return
+    shared.lead_only()
+    with coordinator.locked():
+        result = mutate_shared(coordinator, repo, args)
+    print(json.dumps(result, indent=2))
+
+
+def mutate_shared(coordinator: shared.Coordinator, repo: str, args: argparse.Namespace) -> dict:
+    if args.action == "release":
+        return coordinator.release(repo, args.name)
+    if args.action == "recover":
+        return coordinator.recover(repo)
+    raw = sys.stdin.read(4_000_001) if args.file == "-" else Path(args.file).read_text()
+    shared.require(len(raw.encode("utf-8")) <= 4_000_000, "proposal exceeds 4 MB")
+    return coordinator.apply(repo, args.name, json.loads(raw))
+
+
+def add_shared_parser(sub) -> None:
+    parser = sub.add_parser("shared", help="shared checkout board and lead integration")
+    actions = parser.add_subparsers(dest="action", required=True)
+    for action in ("board", "apply", "release", "recover"):
+        command = actions.add_parser(action)
+        command.add_argument("-C", "--cwd", help="checkout (default current directory)")
+        command.set_defaults(fn=cmd_shared)
+        if action in ("apply", "release"):
+            command.add_argument("name")
+        if action == "apply":
+            command.add_argument("--file", required=True, help="reviewed JSON proposal, or - for stdin")
 
 
 def resolve_cwd(raw: str | None) -> str:
@@ -1534,6 +1603,8 @@ and the target files before accepting an agent's completion claim.
     p.add_argument("--effort", help="reasoning: codex low|medium|high|xhigh; pi thinking level; claude effort")
     p.add_argument("--agent", help="pi: name of ~/.pi-x/agent/agents/<name>.md; claude: custom agent name")
     p.add_argument("--worktree", metavar="BRANCH", help="create an isolated git worktree for BRANCH")
+    p.add_argument("--shared", action="store_true", help="macOS read-only worker with reserved proposal paths")
+    p.add_argument("--files", action="append", default=[], metavar="PATH", help="exact repo-relative shared path (repeatable)")
     p.add_argument("--no-brief", action="store_true", help="do not prepend the orchestration brief")
     add_turn_opts(p)
     p.set_defaults(fn=cmd_start)
@@ -1597,6 +1668,7 @@ and the target files before accepting an agent's completion claim.
     p.add_argument("--full", action="store_true", help="full diff instead of --stat")
     p.set_defaults(fn=cmd_diff)
 
+    add_shared_parser(sub)
     return ap
 
 
@@ -1606,7 +1678,10 @@ def main() -> None:
         execute_turn(sys.argv[2], int(sys.argv[3]))
         return
     args = build_parser().parse_args()
-    args.fn(args)
+    try:
+        args.fn(args)
+    except (shared.SharedError, OSError, ValueError) as error:
+        die(str(error))
 
 
 if __name__ == "__main__":

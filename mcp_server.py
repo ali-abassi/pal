@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 
 PAL = [sys.executable, str(Path(__file__).resolve().with_name("pal.py"))]
-SERVER_INFO = {"name": "pal", "version": "1.1.0"}
+SERVER_INFO = {"name": "pal", "version": "1.2.0"}
 PROTOCOL_VERSION = "2024-11-05"
 OUTPUT_LOCK = threading.Lock()
 MAX_BLOCKING_TIMEOUT = 540
@@ -28,7 +28,7 @@ TIMEOUT = {"type": "number", "description": "requested upper bound in seconds; b
 TOOLS = [
     {
         "name": "pal_start",
-        "description": "Use only when the user explicitly requests agent delegation. Start a persistent, resumable session with another coding agent (codex, pi, or claude) in full-autonomy mode and send the first message. Returns the agent's reply. Use pal_say to continue the same conversation.",
+        "description": "Use only when the user explicitly requests agent delegation. Start a persistent, resumable session with another coding agent (codex, pi, or claude) and send the first message. Returns the agent's reply. Use pal_say to continue the same conversation.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -37,6 +37,8 @@ TOOLS = [
                 "name": {"type": "string", "description": "session name (default <backend>-xxxx)"},
                 "cwd": {"type": "string", "description": "working directory the agent may edit (default: server cwd)"},
                 "worktree": {"type": "string", "description": "create an isolated git worktree for this branch (requires cwd repo)"},
+                "shared": {"type": "boolean", "description": "macOS: read-only worker with exclusive proposal paths", "default": False},
+                "files": {"type": "array", "items": {"type": "string"}, "description": "exact repo-relative paths; required for shared"},
                 "model": {"type": "string", "description": "codex: gpt-5.6-sol…; pi: provider/id; claude: sonnet|opus"},
                 "effort": {"type": "string", "description": "codex low|medium|high|xhigh; pi thinking level; claude effort"},
                 "agent": {"type": "string", "description": "pi: ~/.pi-x/agent/agents/<name>.md role; claude: custom agent"},
@@ -113,6 +115,22 @@ TOOLS = [
 ]
 
 
+for action in ("board", "apply", "release", "recover"):
+    properties = {"cwd": {"type": "string", "description": "Git checkout path"}}
+    required = ["cwd"]
+    if action in ("apply", "release"):
+        properties["name"] = NAME
+        required.append("name")
+    if action == "apply":
+        properties["proposal"] = {"type": "string", "description": "Reviewed JSON text replacement proposal; lead only"}
+        required.append("proposal")
+    TOOLS.append({
+        "name": "pal_shared_" + action,
+        "description": "Shared checkout " + action + ". Only board is read-only. Mutations belong to the lead; application is not acceptance.",
+        "inputSchema": {"type": "object", "properties": properties, "required": required},
+    })
+
+
 def run_pal(argv: list[str], stdin_text: str | None = None) -> str:
     proc = subprocess.run(PAL + argv, input=stdin_text, capture_output=True, text=True,
                           stdin=None if stdin_text is not None else subprocess.DEVNULL)
@@ -141,9 +159,15 @@ def tool_start(a: dict) -> str:
     for flag, key in (("-n", "name"), ("-C", "cwd"), ("-m", "model"), ("--effort", "effort"), ("--agent", "agent"), ("--worktree", "worktree")):
         if a.get(key):
             argv += [flag, a[key]]
+    argv += shared_start_args(a)
     if a.get("no_brief"):
         argv.append("--no-brief")
     return run_pal(argv + turn_args(a) + ["-"], a["prompt"])
+
+
+def shared_start_args(a: dict) -> list[str]:
+    flags = ["--shared"] if a.get("shared") else []
+    return flags + [value for path in a.get("files", []) for value in ("--files", path)]
 
 
 def tool_say(a: dict) -> str:
@@ -188,11 +212,24 @@ def tool_stop(a: dict) -> str:
     return run_pal(["stop", a["name"]])
 
 
+def tool_shared(action: str, a: dict) -> str:
+    argv = ["shared", action, "-C", a["cwd"]]
+    if action in ("apply", "release"):
+        argv.append(a["name"])
+    if action == "apply":
+        return run_pal(argv + ["--file", "-"], a["proposal"])
+    return run_pal(argv)
+
+
 HANDLERS = {
     "pal_start": tool_start, "pal_say": tool_say, "pal_wait": tool_wait, "pal_read": tool_read,
     "pal_log": tool_log, "pal_diff": tool_diff, "pal_list": tool_list, "pal_stop": tool_stop,
     "pal_status": tool_status,
 }
+
+
+for shared_action in ("board", "apply", "release", "recover"):
+    HANDLERS["pal_shared_" + shared_action] = lambda a, action=shared_action: tool_shared(action, a)
 
 
 def handle(req: dict) -> dict | None:
@@ -212,7 +249,11 @@ def call_tool(params: dict) -> dict:
     handler = HANDLERS.get(params.get("name"))
     if handler is None:
         return {"content": [{"type": "text", "text": f"unknown tool {params.get('name')}"}], "isError": True}
-    return {"content": [{"type": "text", "text": handler(params.get("arguments") or {})}]}
+    try:
+        result = handler(params.get("arguments") or {})
+    except (KeyError, TypeError, ValueError, OSError) as error:
+        return {"content": [{"type": "text", "text": f"invalid tool request: {error}"}], "isError": True}
+    return {"content": [{"type": "text", "text": result}]}
 
 
 def response_for(req: dict) -> dict:

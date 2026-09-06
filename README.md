@@ -48,10 +48,22 @@ For real delegation, install and authenticate a backend CLI, then follow the [se
 ## How it works
 
 1. **The lead defines the job.** Choose a backend, model, repository, and bounded outcome. Delegation starts when you ask for it.
-2. **A helper works in its own session.** PAL preserves its native conversation, replies, command activity, and errors. Optional Git worktrees separate edits.
+2. **A helper works in its own session.** PAL preserves its native conversation, replies, command activity, and errors. Choose isolated worktrees or macOS shared mode: helpers read one checkout, reserve files, and propose edits for the lead.
 3. **The lead owns the result.** Inspect actual files and behavior, not just a “done” message. Continue the helper's conversation to fix problems, or reject the work.
 
 For example: your strongest model plans a refactor, a cheaper model handles a repetitive edit, and the lead inspects the integrated diff and runs the relevant checks. That division of work is something you direct, not an automatic quality gate.
+
+## One checkout, coordinated helpers
+
+On macOS, **shared mode lets helpers read the same code without duplicating the checkout**. Each helper reserves specific files. PAL blocks conflicting reservations and direct worker writes; the lead reviews and applies proposals only while the original file hashes still match.
+
+```sh
+pal start codex -n frontend -C /path/to/repo --shared \
+  --files src/header.tsx --bg "Improve the header; return a proposal."
+pal shared board -C /path/to/repo
+```
+
+The shared board refreshes every turn. Reservations stay until the lead releases them, and interrupted applications have a recovery journal. **Quality review and final tests still belong to the lead.** See the [complete shared workflow and boundaries](docs/usage.md#shared-checkout-mode-macos).
 
 ## Commands
 
@@ -114,7 +126,7 @@ The initial public export passed focused synthetic checks for worktree creation,
 | Integration | Evidence and boundary |
 |---|---|
 | Codex | Synthetic session and usage checks passed. Live model execution not retested for this release. |
-| Claude Code and Pi | CLI adapters included. Live compatibility not retested for this release. |
+| Claude Code and Pi | CLI adapters included. Shared write-guard launch paths tested with synthetic subprocesses; live compatibility not retested. |
 | MCP | Local stdio discovery/listing checked. Every client version is not certified. |
 | Platforms | macOS checked. Linux intended but unverified. Native Windows unsupported. |
 
@@ -122,11 +134,13 @@ No measured credit savings or quality uplift is claimed. Backend flags and event
 
 ## Permissions and limits
 
-**PAL launches agents with broad local authority.** Codex bypasses approval prompts and its sandbox; Claude skips permission checks; Pi runs with its configured tools. A working directory or Git worktree is not a security sandbox. Use trusted tasks in an environment where the agent is authorized to operate.
+**Classic PAL sessions launch agents with broad local authority.** Codex bypasses approval prompts and its sandbox; Claude skips permission checks; Pi runs with its configured tools. A working directory or Git worktree is not a security sandbox. Use trusted tasks in an environment where the agent is authorized to operate. Opt-in shared mode adds a macOS checkout write guard for workers and their descendants; external services and unrelated processes remain outside that guard.
 
 Runtime records may contain private code, prompts, and command output. Keep them out of Git. PAL inherits backend credentials and environment; it does not supply authentication. A timeout stops waiting, not the agent. Stopping an agent cannot reverse external actions already performed.
 
 PAL is an early independent project, not an official OpenAI, Anthropic, or Pi product. It does not enforce review, merge approval, credit budgets, or fleet concurrency. Cleanup is manual and name-based; read the [cleanup limits](docs/usage.md#state-and-configuration) before using it. `gc` requires macOS/Xcode.
+
+Shared mode is tested with synthetic sessions, real macOS write-denial checks, competing reservation processes, stale proposals, and interrupted-application recovery. It is intentionally opt-in and macOS-only; no live-model quality or cost result is claimed.
 
 ## Project
 
