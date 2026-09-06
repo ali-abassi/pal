@@ -63,6 +63,18 @@ pal start pi -n hard-worker -C /path/to/repo --route sol-xhigh --bg "Handle the 
 pal routes
 ```
 
+### Ask for a second opinion
+
+Advisory escalation is explicit and bounded. A Sol xhigh PAL worker can ask `astra-high` for a strategy review, or ask `fable-5.1` when a verified Claude model id is configured. Advisors return guidance only, cannot edit or delegate onward, and are never called automatically. A nested worker cannot select the premium Sol or Astra routes.
+
+```sh
+pal advise astra-high -C /path/to/repo "Compare these two implementation strategies and call out risks."
+pal advise fable-5.1 -m VERIFIED_CLAUDE_MODEL -C /path/to/repo "Review this plan and recommend a safer boundary."
+pal advisors
+```
+
+`fable-5.1` deliberately requires `--model` or `PAL_FABLE_ADVISOR_MODEL`; PAL does not guess a provider-specific Fable identifier. The advisory brief says explicitly that the session is being consulted, not delegated implementation work. Classic backend permissions still apply, so use trusted advisory prompts and keep the requester responsible for verification and acceptance.
+
 ## One checkout, coordinated helpers
 
 On macOS, **shared mode lets helpers read the same code without duplicating the checkout**. Each helper reserves specific files. PAL blocks conflicting reservations and direct worker writes; the lead reviews and applies proposals only while the original file hashes still match.
@@ -82,6 +94,8 @@ After [adding `pal` to your PATH](docs/usage.md#install):
 | You want to… | Use |
 |---|---|
 | Give a helper a job | `pal start codex -n helper -C /path/to/repo "Your task"` |
+| Ask an explicit advisor | `pal advise astra-high -C /path/to/repo "Review this strategy"` |
+| List advisor targets | `pal advisors` |
 | Choose its model | Add `-m MODEL --effort LEVEL` supported by your backend |
 | Choose a route | Add `--route luna-fast`, `--route sol-xhigh`, or `--route backend-default` |
 | Keep working while it runs | Add `--bg`, then `pal wait helper --timeout 60` |
@@ -127,25 +141,25 @@ Use it when you want persistent helpers, deliberate model selection, or independ
 - Backend-native session IDs and reported ID mismatch detection.
 - Detached runners, explicit stop commands, and bounded waits.
 - Local event logs, replies, and metadata under `PAL_HOME`.
-- Optional worktrees, parent/child records, and a nesting depth cap of two.
+- Optional worktrees, parent/child records, advisor roles, and a nesting depth cap of two.
 - Backend-reported usage where available; optional price estimates, not subscription-credit accounting.
 
 ## What is verified
 
-The initial public export passed focused synthetic checks for worktree creation, Codex usage reporting, session continuation, and MCP discovery/listing on macOS with Python 3.14.7. This README's no-model quickstart was also run from a fresh checkout. These are local checks, not live-model benchmarks or a CI badge.
+The current public export passed focused synthetic checks for worktree creation, Codex usage reporting, session continuation, explicit advisor sessions, nested premium-route denial, and MCP discovery/listing on macOS with Python 3.14.7. This README's no-model quickstart was also run from a fresh checkout. These are local checks, not live-model benchmarks or a CI badge.
 
 | Integration | Evidence and boundary |
 |---|---|
 | Codex | Synthetic session, usage, route-resolution, and command-forwarding checks passed. Live model execution not retested for this release. |
 | Claude Code and Pi | CLI adapters included. Shared write-guard launch paths tested with synthetic subprocesses; live compatibility not retested. |
-| MCP | Local stdio discovery/listing and read-only `pal_routes` checks passed. Every client version is not certified. |
+| MCP | Local stdio discovery/listing, route, and advisor-tool checks passed. Every client version is not certified. |
 | Platforms | macOS checked. Linux intended but unverified. Native Windows unsupported. |
 
 No measured credit savings or quality uplift is claimed. Backend flags and event formats can change. [Tests and verification limits](docs/usage.md#development-and-verification).
 
 ## Permissions and limits
 
-**Classic PAL sessions launch agents with broad local authority.** Codex bypasses approval prompts and its sandbox; Claude skips permission checks; Pi runs with its configured tools. A working directory or Git worktree is not a security sandbox. Use trusted tasks in an environment where the agent is authorized to operate. Opt-in shared mode adds a macOS checkout write guard for workers and their descendants; external services and unrelated processes remain outside that guard.
+**Classic PAL sessions launch agents with broad local authority.** Codex bypasses approval prompts and its sandbox; Claude skips permission checks; Pi runs with its configured tools. A working directory or Git worktree is not a security sandbox. Use trusted tasks in an environment where the agent is authorized to operate. Advisor prompts and the PAL child-start guard make an advisor guidance-only and non-delegating by process, but do not create a filesystem sandbox. Opt-in shared mode adds a macOS checkout write guard for workers and their descendants; external services and unrelated processes remain outside that guard.
 
 Runtime records may contain private code, prompts, and command output. Keep them out of Git. PAL inherits backend credentials and environment; it does not supply authentication. A timeout stops waiting, not the agent. Stopping an agent cannot reverse external actions already performed.
 

@@ -40,6 +40,8 @@ pal status implementation
 
 New Codex and Pi sessions use the `luna-fast` route by default: GPT-5.6 Luna at xhigh, with Codex requesting Fast processing. Use `--route sol-xhigh` for GPT-5.6 Sol at xhigh (Codex requests Ultrafast processing), or `--route backend-default` to leave model selection to the backend. `pal routes` prints the route table. An explicit `--model` or `--effort` wins over its route value; an explicit model without an explicit route does not inherit a route service tier. Claude requires an explicit Claude model when using either OpenAI route. PAL records the route and exports its identity in the worker environment; a worker's self-description is not evidence.
 
+Advisory escalation is an explicit one-hop consult. `pal advise astra-high` starts the verified Codex `gpt-6-astra` advisor at high reasoning. `pal advise fable-5.1` requires a verified Claude provider id through `--model` or `PAL_FABLE_ADVISOR_MODEL`; PAL will not guess one. A Sol xhigh PAL worker may request either advisor, and a user may start one at the top level. Advisors return guidance only, cannot edit or delegate, and nested workers cannot select Sol or Astra premium routes. Use `pal advisors` to inspect the target requirements.
+
 Use `-m MODEL` and `--effort LEVEL` to override the selected route with settings supported by your installed backend and account. PAL records the requested route and does not treat a model's self-description as evidence. Use `--route backend-default` for backend configuration; Claude otherwise needs an explicit Claude model.
 
 ```sh
@@ -148,6 +150,8 @@ This is **not a general hostile-code sandbox**. Other processes, other PAL_HOME 
 
 `pal_routes` is read-only and returns the effective route table without starting a model call. Workers may read the board. Mutating shared commands reject invocation from a PAL worker environment. Existing MCP processes need reconnecting after upgrade to discover the new tools.
 
+`pal_advisor` creates the same explicit advisory session from an MCP client. It accepts `advisor`, `prompt`, optional `name`, `cwd`, and a verified `model` for `fable-5.1`; `pal_advisors` lists the targets without starting a call. The advisor session metadata and `PAL_CAN_DELEGATE=0` environment marker make its no-delegation boundary visible. This marker complements the guidance prompt; classic backend permissions still apply.
+
 ## MCP setup
 
 The bundled stdio MCP server invokes the adjacent `pal.py` with the same Python interpreter, so it does not depend on a separate `pal` installation or your original skill directories.
@@ -173,7 +177,7 @@ For clients accepting JSON configuration:
 }
 ```
 
-Tools: `pal_start`, `pal_say`, `pal_wait`, `pal_read`, `pal_log`, `pal_diff`, `pal_list`, `pal_status`, `pal_stop`, `pal_routes`, and the four `pal_shared_*` tools above. Start long work with `wait: false`, then poll with bounded `pal_wait` calls. Blocking MCP waits are capped at 540 seconds; timeout leaves the backend running. Tool calls run in separate threads, so a wait does not serialize all client requests.
+Tools: `pal_start`, `pal_say`, `pal_wait`, `pal_read`, `pal_log`, `pal_diff`, `pal_list`, `pal_status`, `pal_stop`, `pal_routes`, `pal_advisors`, `pal_advisor`, and the four `pal_shared_*` tools above. Start long work with `wait: false`, then poll with bounded `pal_wait` calls. Blocking MCP waits are capped at 540 seconds; timeout leaves the backend running. Tool calls run in separate threads, so a wait does not serialize all client requests.
 
 ## Recommended agent instruction
 
@@ -191,6 +195,7 @@ PAL does not mechanically enforce this instruction, code review, merge approval,
 | `PAL_WORKTREE_ROOT` | `$PAL_HOME/worktrees` | Managed Git worktrees |
 | `PAL_TMP_ROOT` | `$PAL_HOME/tmp` | Temporary directories considered by cleanup |
 | `PAL_PI_AGENTS_DIR` | `~/.pi-x/agent/agents` | Optional Pi Markdown roles |
+| `PAL_FABLE_ADVISOR_MODEL` | unset | Verified Claude provider model id for `pal advise fable-5.1` |
 
 Runtime records can contain source code, prompts, command output, and other sensitive material. Keep them private and out of Git. Authenticate through the backend CLIs; PAL inherits their environment and does not supply credentials.
 

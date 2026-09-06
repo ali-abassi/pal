@@ -216,8 +216,11 @@ class Coordinator:
         self.active_task(board, meta["name"])
         return (
             "SHARED CHECKOUT CONTRACT (applies on every turn):\n"
-            "You are a read-only worker. Do not write repository files, run Git mutations, "
+            "You are being delegated to by the PAL lead. You are a read-only worker. Do not write repository files, run Git mutations, "
             "install dependencies, delegate, or invoke external services to edit files. "
+            "Read /Users/aliabassi/.codex/policies/project-alignment.md, "
+            "/Users/aliabassi/.codex/policies/project-acceptance.md, and "
+            "/Users/aliabassi/.codex/policies/orchestration.md before proposing changes. "
             "The lead owns integration, tests with build outputs, Git and acceptance. "
             "Other workers may be active. Read relevant files; return your proposal as a JSON "
             "object only: {\"summary\":\"reason\",\"changes\":[{\"path\":\"owned/path\","

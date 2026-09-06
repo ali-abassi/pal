@@ -29,6 +29,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import advisors
 import routing
 import shared_workspace as shared
 
@@ -46,10 +47,12 @@ DEFAULT_MODELS = {"claude": "sonnet"}
 POLL_SECONDS = 1.0
 SESSION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
-BRIEF = """[Orchestration note] You are being driven by an orchestrating agent through a non-interactive session. It reads your reply and may follow up with more instructions in this same session, so keep your working state and be ready to continue.
+BRIEF = """[Delegation note] You are being delegated to by the PAL lead/orchestrator in a non-interactive session. It reads your reply and may follow up with more instructions in this same session, so keep your working state and be ready to continue.
 PAL-selected route: {route}; backend model: {model}; reasoning: {effort}; requested service tier: {service_tier}.
 Rules:
 - You have full autonomy in {cwd}. Never ask for permission or wait for confirmation; there is nobody to answer mid-turn.
+- You are a delegated executor. Do not start another agent or seek an advisor unless PAL_CAN_SEEK_ADVISOR=1; a child cannot escalate to a premium route.
+- Read `/Users/aliabassi/.codex/policies/project-alignment.md`, `/Users/aliabassi/.codex/policies/project-acceptance.md`, and `/Users/aliabassi/.codex/policies/orchestration.md` before making changes.
 - If something is ambiguous, choose the most reasonable interpretation, state the assumption, and proceed.
 - PAL metadata and environment identify your actual route. Do not claim Astra, Fable, Sol, Luna, or another model unless PAL selected and recorded it.
 - Work in this order: understand the intent and acceptance criteria, make the smallest coherent change, inspect every changed line, run the narrowest authoritative checks, and critically review the result against the request.
@@ -57,6 +60,14 @@ Rules:
 - End every reply with three short sections: (1) What changed, with file paths. (2) How you verified it and the results. (3) Open items: anything undone, uncertain, or needing a decision.
 
 Task:
+"""
+
+ADVISOR_BRIEF = """[Advisor note] You are being consulted by a PAL worker for bounded strategic guidance. You are an advisor, not an executor: do not edit files, run mutating commands, delegate to another agent, or claim that guidance is implementation or acceptance. Inspect the supplied context and repository as needed, state assumptions, compare options, and return concrete advice with risks and a recommended next step.
+PAL advisor target: {advisor}; backend model: {model}; reasoning: {effort}.
+The requesting worker owns implementation, verification, and acceptance. Do not claim Astra, Fable, Sol, Luna, or another identity unless PAL metadata records it.
+Read `/Users/aliabassi/.codex/policies/project-alignment.md`, `/Users/aliabassi/.codex/policies/project-acceptance.md`, and `/Users/aliabassi/.codex/policies/orchestration.md` before advising.
+
+Question:
 """
 
 
@@ -599,6 +610,9 @@ def backend_env(meta: dict) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key != "CLAUDECODE"}
     env["PAL_SESSION"] = meta["name"]
     env["PAL_DEPTH"] = str(meta.get("depth", 0))
+    env["PAL_ROLE"] = meta.get("role", "worker")
+    env["PAL_CAN_DELEGATE"] = "1" if meta.get("can_delegate", True) else "0"
+    env["PAL_CAN_SEEK_ADVISOR"] = "1" if meta.get("can_seek_advisor", False) else "0"
     env["PAL_ROUTE"] = meta.get("route", "backend-default")
     env["PAL_MODEL"] = meta.get("model") or "backend-default"
     env["PAL_EFFORT"] = meta.get("effort") or "backend-default"
@@ -908,19 +922,54 @@ def report_after_wait(meta: dict, n: int, as_json: bool) -> None:
 # ---------- commands ----------
 
 def cmd_start(args: argparse.Namespace) -> None:
+    start_session(args)
+
+
+def start_session(
+    args: argparse.Namespace, *, role: str = "worker", advisor: str | None = None,
+) -> None:
     validate_shared_options(args)
-    routing.resolve(args.backend, args.route, args.model, args.effort)
+    if role == "advisor":
+        advisors.resolve(advisor or "", args.model)
+    else:
+        routing.resolve(args.backend, args.route, args.model, args.effort)
     cwd = resolve_cwd(args.cwd)
     name = resolve_new_session_name(args.name, args.backend)
     validate_start_agent(args.backend, args.agent)
     parent, depth = new_session_parentage()
+    validate_child_target(args, depth, role)
     prompt = read_prompt(args.prompt, args.file)
     cwd, repo = start_location(args, cwd, name)
-    meta = new_session_meta(args, name, cwd, repo, parent, depth)
+    meta = new_session_meta(args, name, cwd, repo, parent, depth, role=role, advisor=advisor)
     prompt = start_prompt(args, cwd, meta, prompt)
     register_session(meta, args, prompt)
     n = begin_turn(name, prompt)
     report_or_background(meta, n, args)
+
+
+def cmd_advise(args: argparse.Namespace) -> None:
+    parent_meta = advisor_parent()
+    target = advisors.resolve(args.advisor, args.model)
+    cwd = args.cwd or (parent_meta.get("cwd") if parent_meta else os.getcwd())
+    advisor_args = argparse.Namespace(
+        backend=target.backend, route=None, model=target.model, effort=target.effort,
+        agent=None, worktree=None, shared=False, files=[], no_brief=False,
+        name=args.name, cwd=cwd, prompt=args.prompt, file=args.file,
+        bg=args.bg, timeout=args.timeout, json=args.json,
+    )
+    start_session(advisor_args, role="advisor", advisor=args.advisor)
+
+
+def advisor_parent() -> dict | None:
+    parent = os.environ.get("PAL_SESSION")
+    if not parent:
+        return None
+    meta = load_meta(parent)
+    if meta.get("role", "worker") == "advisor":
+        die("advisor sessions cannot seek another advisor or delegate")
+    if not advisors.can_seek(meta.get("model"), meta.get("effort")):
+        die("advisor escalation from PAL workers is limited to Sol xhigh; use an explicit top-level request")
+    return meta
 
 
 def validate_shared_options(args: argparse.Namespace) -> None:
@@ -970,6 +1019,16 @@ def cmd_routes(args: argparse.Namespace) -> None:
         print(route_line(route))
 
 
+def cmd_advisors(args: argparse.Namespace) -> None:
+    targets = advisors.describe()
+    if args.json:
+        print(json.dumps(targets, indent=2))
+        return
+    for target in targets:
+        model = target["model"] or "verified id required"
+        print(f"{target['advisor']}: backend={target['backend']} model={model} effort={target['effort']}")
+
+
 def start_location(args: argparse.Namespace, cwd: str, name: str) -> tuple[str, str | None]:
     if not args.worktree:
         return cwd, None
@@ -979,7 +1038,12 @@ def start_location(args: argparse.Namespace, cwd: str, name: str) -> tuple[str, 
 
 
 def start_prompt(args: argparse.Namespace, cwd: str, meta: dict, prompt: str) -> str:
-    if args.no_brief or args.shared:
+    if meta.get("role") == "advisor":
+        return ADVISOR_BRIEF.format(
+            advisor=meta["advisor"], model=meta_value(meta, "model"),
+            effort=meta_value(meta, "effort"),
+        ) + prompt
+    if (args.no_brief and not meta.get("parent")) or args.shared:
         return prompt
     return BRIEF.format(
         cwd=cwd,
@@ -1103,6 +1167,10 @@ def create_worktree(repo: str, name: str, branch: str) -> str:
 
 
 def new_session_parentage() -> tuple[str | None, int]:
+    if os.environ.get("PAL_SESSION") and (
+        os.environ.get("PAL_ROLE") == "advisor" or os.environ.get("PAL_CAN_DELEGATE") == "0"
+    ):
+        die("advisor sessions cannot delegate")
     parent = os.environ.get("PAL_SESSION")
     if not parent:
         return None, 0
@@ -1118,25 +1186,44 @@ def new_session_parentage() -> tuple[str | None, int]:
     return parent, depth
 
 
+def validate_child_target(args: argparse.Namespace, depth: int, role: str) -> None:
+    if role == "advisor" or depth < 2:
+        return
+    decision = routing.resolve(args.backend, getattr(args, "route", None), args.model, args.effort)
+    if decision.route == "sol-xhigh" or decision.model in {
+        "gpt-5.6-sol", "openai-codex/gpt-5.6-sol", "gpt-6-astra",
+    }:
+        die("nested delegated workers cannot select premium routes; ask the PAL lead to escalate")
+
+
 def new_session_meta(
     args: argparse.Namespace, name: str, cwd: str, repo: str | None,
-    parent: str | None, depth: int,
+    parent: str | None, depth: int, *, role: str = "worker", advisor: str | None = None,
 ) -> dict:
-    decision = routing.resolve(
-        args.backend, getattr(args, "route", None), args.model, args.effort,
-    )
+    if role == "advisor":
+        target = advisors.resolve(advisor or "", args.model)
+        route, route_source = f"advisor:{target.name}", f"advisor:{target.name}"
+        model, effort, service_tier = target.model, target.effort, None
+    else:
+        decision = routing.resolve(
+            args.backend, getattr(args, "route", None), args.model, args.effort,
+        )
+        route, route_source = decision.route, decision.source
+        model, effort, service_tier = decision.model, decision.effort, decision.service_tier
     meta = {
         "name": name, "backend": args.backend, "cwd": cwd,
-        "model": decision.model or DEFAULT_MODELS.get(args.backend),
-        "effort": decision.effort, "agent": args.agent,
-        "route": decision.route, "route_source": decision.source,
-        "service_tier": decision.service_tier,
+        "model": model or DEFAULT_MODELS.get(args.backend), "effort": effort, "agent": args.agent,
+        "route": route, "route_source": route_source, "service_tier": service_tier,
+        "role": role, "can_delegate": role != "advisor" and depth < 2,
+        "can_seek_advisor": role == "worker" and advisors.can_seek(model, effort),
         "backend_session_id": None if args.backend == "codex" else str(uuid.uuid4()),
         "backend_initialized": False,
         "created": now_iso(), "status": "idle", "turns": [], "depth": depth,
     }
     if parent:
         meta["parent"] = parent
+    if advisor:
+        meta["advisor"] = advisor
     if args.worktree:
         meta.update({"worktree": args.worktree, "repo": repo})
     return meta
@@ -1272,7 +1359,7 @@ def print_hidden_sessions(hidden: int, stream=None) -> None:
 
 
 def print_sessions_json(metas: list[dict]) -> None:
-    fields = ("name", "backend", "model", "cwd", "status", "updated", "agent", "parent", "worktree", "repo")
+    fields = ("name", "backend", "model", "cwd", "status", "updated", "agent", "parent", "role", "advisor", "can_delegate", "can_seek_advisor", "worktree", "repo")
     sessions = [
         {key: meta.get(key) for key in fields}
         | {"turns": len(meta["turns"]), "metrics": session_metrics(meta)}
@@ -1650,6 +1737,7 @@ def build_parser() -> argparse.ArgumentParser:
   pal log implement
   pal diff implement --full
   pal say implement "Review the failure and fix it"
+  pal advise astra-high -C /path/to/repo "Compare the two implementation strategies"
   pal read implement --all
 
 The session name is the durable orchestrator handle. Use `say` for every
@@ -1742,6 +1830,18 @@ and the target files before accepting an agent's completion claim.
     p = sub.add_parser("routes", help="show available model routes without starting a session")
     p.add_argument("--json", action="store_true")
     p.set_defaults(fn=cmd_routes)
+
+    p = sub.add_parser("advisors", help="show bounded advisory targets without starting a session")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_advisors)
+
+    p = sub.add_parser("advise", help="ask one explicit advisor for guidance")
+    p.add_argument("advisor", choices=advisors.ADVISOR_NAMES)
+    p.add_argument("-n", "--name", help="session name (default: <backend>-xxxx)")
+    p.add_argument("-C", "--cwd", help="repository or directory to inspect (default: parent session cwd)")
+    p.add_argument("-m", "--model", help="verified provider model id for fable-5.1")
+    add_turn_opts(p)
+    p.set_defaults(fn=cmd_advise)
 
     add_shared_parser(sub)
     return ap

@@ -14,10 +14,11 @@ import sys
 import threading
 from pathlib import Path
 
+import advisors
 import routing
 
 PAL = [sys.executable, str(Path(__file__).resolve().with_name("pal.py"))]
-SERVER_INFO = {"name": "pal", "version": "1.3.0"}
+SERVER_INFO = {"name": "pal", "version": "1.4.0"}
 PROTOCOL_VERSION = "2024-11-05"
 OUTPUT_LOCK = threading.Lock()
 MAX_BLOCKING_TIMEOUT = 540
@@ -143,6 +144,30 @@ TOOLS.append({
     "inputSchema": {"type": "object", "properties": {}},
 })
 
+TOOLS.append({
+    "name": "pal_advisors",
+    "description": "Read PAL's bounded advisor targets and whether a verified model id is required; never starts a model call.",
+    "inputSchema": {"type": "object", "properties": {}},
+})
+
+TOOLS.append({
+    "name": "pal_advisor",
+    "description": "Create one explicit, guidance-only advisory session. A Sol xhigh PAL worker may use this to ask Astra High or a configured Fable 5.1 backend for strategy guidance; advisors are instructed not to edit and cannot delegate onward through PAL.",
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "advisor": {"type": "string", "enum": list(advisors.ADVISOR_NAMES)},
+            "prompt": PROMPT,
+            "name": {"type": "string", "description": "session name (default <backend>-xxxx)"},
+            "cwd": {"type": "string", "description": "directory for advisory inspection (default: parent session cwd)"},
+            "model": {"type": "string", "description": "verified provider model id required for fable-5.1"},
+            "wait": WAIT,
+            "timeout": TIMEOUT,
+        },
+        "required": ["advisor", "prompt"],
+    },
+})
+
 
 def run_pal(argv: list[str], stdin_text: str | None = None) -> str:
     proc = subprocess.run(PAL + argv, input=stdin_text, capture_output=True, text=True,
@@ -238,11 +263,25 @@ def tool_routes(a: dict) -> str:
     return json.dumps(routing.describe(), indent=2)
 
 
+def tool_advisors(a: dict) -> str:
+    return json.dumps(advisors.describe(), indent=2)
+
+
+def tool_advisor(a: dict) -> str:
+    argv = ["advise", a["advisor"]]
+    for flag, key in (("-n", "name"), ("-C", "cwd"), ("-m", "model")):
+        if a.get(key):
+            argv += [flag, a[key]]
+    return run_pal(argv + turn_args(a) + ["-"], a["prompt"])
+
+
 HANDLERS = {
     "pal_start": tool_start, "pal_say": tool_say, "pal_wait": tool_wait, "pal_read": tool_read,
     "pal_log": tool_log, "pal_diff": tool_diff, "pal_list": tool_list, "pal_stop": tool_stop,
     "pal_status": tool_status,
     "pal_routes": tool_routes,
+    "pal_advisors": tool_advisors,
+    "pal_advisor": tool_advisor,
 }
 
 
