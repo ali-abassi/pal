@@ -14,8 +14,10 @@ import sys
 import threading
 from pathlib import Path
 
+import routing
+
 PAL = [sys.executable, str(Path(__file__).resolve().with_name("pal.py"))]
-SERVER_INFO = {"name": "pal", "version": "1.2.0"}
+SERVER_INFO = {"name": "pal", "version": "1.3.0"}
 PROTOCOL_VERSION = "2024-11-05"
 OUTPUT_LOCK = threading.Lock()
 MAX_BLOCKING_TIMEOUT = 540
@@ -24,11 +26,15 @@ NAME = {"type": "string", "description": "pal session name"}
 PROMPT = {"type": "string", "description": "message to send to the agent"}
 WAIT = {"type": "boolean", "description": "block for the reply (default true)", "default": True}
 TIMEOUT = {"type": "number", "description": "requested upper bound in seconds; blocking calls are capped at 540 (default 600)", "default": 600}
+START_OPTIONS = (
+    ("-n", "name"), ("-C", "cwd"), ("-m", "model"), ("--effort", "effort"),
+    ("--agent", "agent"), ("--worktree", "worktree"), ("--route", "route"),
+)
 
 TOOLS = [
     {
         "name": "pal_start",
-        "description": "Use only when the user explicitly requests agent delegation. Start a persistent, resumable session with another coding agent (codex, pi, or claude) and send the first message. Returns the agent's reply. Use pal_say to continue the same conversation.",
+        "description": "Use only when the user explicitly requests agent delegation. Start a persistent, resumable session with the selected route (luna-fast by default) and send the first message. The worker must review and fix its own work; the lead still accepts it. Use pal_say to continue the same conversation.",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -37,6 +43,7 @@ TOOLS = [
                 "name": {"type": "string", "description": "session name (default <backend>-xxxx)"},
                 "cwd": {"type": "string", "description": "working directory the agent may edit (default: server cwd)"},
                 "worktree": {"type": "string", "description": "create an isolated git worktree for this branch (requires cwd repo)"},
+                "route": {"type": "string", "enum": list(routing.ROUTE_NAMES), "description": "model route (default luna-fast; sol-xhigh is the stronger alternate)"},
                 "shared": {"type": "boolean", "description": "macOS: read-only worker with exclusive proposal paths", "default": False},
                 "files": {"type": "array", "items": {"type": "string"}, "description": "exact repo-relative paths; required for shared"},
                 "model": {"type": "string", "description": "codex: gpt-5.6-sol…; pi: provider/id; claude: sonnet|opus"},
@@ -130,6 +137,12 @@ for action in ("board", "apply", "release", "recover"):
         "inputSchema": {"type": "object", "properties": properties, "required": required},
     })
 
+TOOLS.append({
+    "name": "pal_routes",
+    "description": "Read PAL's explicit model routes and their resolved backend settings; never starts a model call.",
+    "inputSchema": {"type": "object", "properties": {}},
+})
+
 
 def run_pal(argv: list[str], stdin_text: str | None = None) -> str:
     proc = subprocess.run(PAL + argv, input=stdin_text, capture_output=True, text=True,
@@ -156,7 +169,7 @@ def effective_timeout(a: dict) -> float | int:
 
 def tool_start(a: dict) -> str:
     argv = ["start", a["backend"]]
-    for flag, key in (("-n", "name"), ("-C", "cwd"), ("-m", "model"), ("--effort", "effort"), ("--agent", "agent"), ("--worktree", "worktree")):
+    for flag, key in START_OPTIONS:
         if a.get(key):
             argv += [flag, a[key]]
     argv += shared_start_args(a)
@@ -221,10 +234,15 @@ def tool_shared(action: str, a: dict) -> str:
     return run_pal(argv)
 
 
+def tool_routes(a: dict) -> str:
+    return json.dumps(routing.describe(), indent=2)
+
+
 HANDLERS = {
     "pal_start": tool_start, "pal_say": tool_say, "pal_wait": tool_wait, "pal_read": tool_read,
     "pal_log": tool_log, "pal_diff": tool_diff, "pal_list": tool_list, "pal_stop": tool_stop,
     "pal_status": tool_status,
+    "pal_routes": tool_routes,
 }
 
 

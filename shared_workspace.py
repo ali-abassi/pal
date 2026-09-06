@@ -226,7 +226,8 @@ class Coordinator:
             "Only propose your exact reserved paths. If dependencies changed or you need "
             "another path, report the blocker instead of guessing or editing around it. "
             "The lead reviews all proposals; completion is not acceptance. "
-            "Board snapshots refresh each turn. During a long turn you can read updates using "
+            f"PAL selected route={meta.get('route', 'backend-default')} model={meta.get('model') or 'backend-default'}; "
+            "board snapshots refresh each turn. During a long turn you can read updates using "
             "pal shared board -C followed by the checkout path.\n"
             f"Your session: {meta['name']}\nShared board:\n{json.dumps(context_board(board, meta['name']))}\n\n{prompt}"
         )

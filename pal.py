@@ -29,6 +29,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import routing
 import shared_workspace as shared
 
 PAL_HOME = Path(os.environ.get("PAL_HOME", Path.home() / ".pal"))
@@ -46,10 +47,13 @@ POLL_SECONDS = 1.0
 SESSION_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 BRIEF = """[Orchestration note] You are being driven by an orchestrating agent through a non-interactive session. It reads your reply and may follow up with more instructions in this same session, so keep your working state and be ready to continue.
+PAL-selected route: {route}; backend model: {model}; reasoning: {effort}; requested service tier: {service_tier}.
 Rules:
 - You have full autonomy in {cwd}. Never ask for permission or wait for confirmation; there is nobody to answer mid-turn.
 - If something is ambiguous, choose the most reasonable interpretation, state the assumption, and proceed.
-- Do the work completely and verify it (build, tests, or a real run where they exist).
+- PAL metadata and environment identify your actual route. Do not claim Astra, Fable, Sol, Luna, or another model unless PAL selected and recorded it.
+- Work in this order: understand the intent and acceptance criteria, make the smallest coherent change, inspect every changed line, run the narrowest authoritative checks, and critically review the result against the request.
+- Fix every issue you find before reporting completion. If the evidence is incomplete or a check fails, advise the lead with the exact blocker and next action instead of calling the work done.
 - End every reply with three short sections: (1) What changed, with file paths. (2) How you verified it and the results. (3) Open items: anything undone, uncertain, or needing a decision.
 
 Task:
@@ -232,6 +236,8 @@ def codex_cmd(meta: dict, paths: dict[str, Path]) -> tuple[list[str], str | None
         tuning += ["-m", meta["model"]]
     if meta.get("effort"):
         tuning += ["-c", f'model_reasoning_effort="{meta["effort"]}"']
+    if meta.get("service_tier"):
+        tuning += ["-c", f'service_tier="{meta["service_tier"]}"']
     head = ["codex", "exec", "--json", "-o", str(paths["last"])] + yolo
     sid = meta.get("backend_session_id")
     if sid:
@@ -593,6 +599,10 @@ def backend_env(meta: dict) -> dict[str, str]:
     env = {key: value for key, value in os.environ.items() if key != "CLAUDECODE"}
     env["PAL_SESSION"] = meta["name"]
     env["PAL_DEPTH"] = str(meta.get("depth", 0))
+    env["PAL_ROUTE"] = meta.get("route", "backend-default")
+    env["PAL_MODEL"] = meta.get("model") or "backend-default"
+    env["PAL_EFFORT"] = meta.get("effort") or "backend-default"
+    env["PAL_SERVICE_TIER"] = meta.get("service_tier") or "backend-default"
     return env
 
 
@@ -729,6 +739,8 @@ def begin_turn(name: str, prompt: str) -> int:
         if meta.get("shared"):
             prompt = coordinator.prompt(meta, prompt)
         n = len(meta["turns"]) + 1
+        if n > 1 and not meta.get("shared"):
+            prompt = review_reminder() + prompt
         paths = turn_paths(name, n)
         paths["prompt"].parent.mkdir(exist_ok=True)
         paths["prompt"].write_text(prompt)
@@ -736,6 +748,15 @@ def begin_turn(name: str, prompt: str) -> int:
         meta["status"] = "running"
         meta["runner_pid"] = spawn_runner(name, n)
     return n
+
+
+def review_reminder() -> str:
+    return (
+        "[PAL review reminder] Continue from the same native session. Re-read the current "
+        "request and actual files, inspect your complete diff, run the smallest relevant "
+        "check, and fix any issue you find before reporting. Give concrete advice when "
+        "the lead must decide or verify something; completion prose is not acceptance.\n\n"
+    )
 
 
 def reject_running_session(meta: dict) -> None:
@@ -888,20 +909,15 @@ def report_after_wait(meta: dict, n: int, as_json: bool) -> None:
 
 def cmd_start(args: argparse.Namespace) -> None:
     validate_shared_options(args)
+    routing.resolve(args.backend, args.route, args.model, args.effort)
     cwd = resolve_cwd(args.cwd)
     name = resolve_new_session_name(args.name, args.backend)
     validate_start_agent(args.backend, args.agent)
     parent, depth = new_session_parentage()
     prompt = read_prompt(args.prompt, args.file)
-    repo = None
-    if args.worktree:
-        if not args.cwd:
-            die("--worktree requires -C REPO")
-        repo = cwd
-        cwd = create_worktree(repo, name, args.worktree)
-    if not (args.no_brief or args.shared):
-        prompt = BRIEF.format(cwd=cwd) + prompt
+    cwd, repo = start_location(args, cwd, name)
     meta = new_session_meta(args, name, cwd, repo, parent, depth)
+    prompt = start_prompt(args, cwd, meta, prompt)
     register_session(meta, args, prompt)
     n = begin_turn(name, prompt)
     report_or_background(meta, n, args)
@@ -943,6 +959,52 @@ def cmd_shared(args: argparse.Namespace) -> None:
     with coordinator.locked():
         result = mutate_shared(coordinator, repo, args)
     print(json.dumps(result, indent=2))
+
+
+def cmd_routes(args: argparse.Namespace) -> None:
+    routes = routing.describe()
+    if args.json:
+        print(json.dumps(routes, indent=2))
+        return
+    for route in routes:
+        print(route_line(route))
+
+
+def start_location(args: argparse.Namespace, cwd: str, name: str) -> tuple[str, str | None]:
+    if not args.worktree:
+        return cwd, None
+    if not args.cwd:
+        die("--worktree requires -C REPO")
+    return create_worktree(cwd, name, args.worktree), cwd
+
+
+def start_prompt(args: argparse.Namespace, cwd: str, meta: dict, prompt: str) -> str:
+    if args.no_brief or args.shared:
+        return prompt
+    return BRIEF.format(
+        cwd=cwd,
+        route=meta["route"],
+        model=meta_value(meta, "model"),
+        effort=meta_value(meta, "effort"),
+        service_tier=meta_value(meta, "service_tier"),
+    ) + prompt
+
+
+def meta_value(meta: dict, key: str) -> str:
+    return meta.get(key) or "backend default"
+
+
+def display_value(value: str | None) -> str:
+    return value or "default"
+
+
+def route_line(route: dict[str, str | None]) -> str:
+    return (
+        f"{route['route']}: codex={display_value(route['codex_model'])} "
+        f"pi={display_value(route['pi_model'])} "
+        f"effort={display_value(route['effort'])} "
+        f"service_tier={display_value(route['codex_service_tier'])}"
+    )
 
 
 def mutate_shared(coordinator: shared.Coordinator, repo: str, args: argparse.Namespace) -> dict:
@@ -1060,10 +1122,15 @@ def new_session_meta(
     args: argparse.Namespace, name: str, cwd: str, repo: str | None,
     parent: str | None, depth: int,
 ) -> dict:
+    decision = routing.resolve(
+        args.backend, getattr(args, "route", None), args.model, args.effort,
+    )
     meta = {
         "name": name, "backend": args.backend, "cwd": cwd,
-        "model": args.model or DEFAULT_MODELS.get(args.backend),
-        "effort": args.effort, "agent": args.agent,
+        "model": decision.model or DEFAULT_MODELS.get(args.backend),
+        "effort": decision.effort, "agent": args.agent,
+        "route": decision.route, "route_source": decision.source,
+        "service_tier": decision.service_tier,
         "backend_session_id": None if args.backend == "codex" else str(uuid.uuid4()),
         "backend_initialized": False,
         "created": now_iso(), "status": "idle", "turns": [], "depth": depth,
@@ -1601,6 +1668,10 @@ and the target files before accepting an agent's completion claim.
     p.add_argument("-C", "--cwd", help="working directory for the agent (default: current)")
     p.add_argument("-m", "--model", help="model (codex: e.g. gpt-5.6-sol; pi: provider/id; claude: sonnet|opus|fable)")
     p.add_argument("--effort", help="reasoning: codex low|medium|high|xhigh; pi thinking level; claude effort")
+    p.add_argument(
+        "--route", choices=routing.ROUTE_NAMES, default=None,
+        help="PAL model route (default: luna-fast; explicit model/effort override its values)",
+    )
     p.add_argument("--agent", help="pi: name of ~/.pi-x/agent/agents/<name>.md; claude: custom agent name")
     p.add_argument("--worktree", metavar="BRANCH", help="create an isolated git worktree for BRANCH")
     p.add_argument("--shared", action="store_true", help="macOS read-only worker with reserved proposal paths")
@@ -1667,6 +1738,10 @@ and the target files before accepting an agent's completion claim.
     p.add_argument("name")
     p.add_argument("--full", action="store_true", help="full diff instead of --stat")
     p.set_defaults(fn=cmd_diff)
+
+    p = sub.add_parser("routes", help="show available model routes without starting a session")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_routes)
 
     add_shared_parser(sub)
     return ap

@@ -38,12 +38,19 @@ pal status implementation
 
 `start` creates a session; `say` resumes its native thread. Codex's thread ID comes from structured backend events. Pi uses a separate session store. Claude starts with an explicit UUID and resumes it on later turns. PAL rejects a reported session-ID mismatch.
 
-Use `-m MODEL` and `--effort LEVEL` to choose settings supported by your installed backend and account. PAL does not choose an optimal model or verify a model's self-description. Without an override, Codex/Pi use their configured defaults and Claude defaults to `sonnet`.
+New Codex and Pi sessions use the `luna-fast` route by default: GPT-5.6 Luna at xhigh, with Codex requesting Fast processing. Use `--route sol-xhigh` for GPT-5.6 Sol at xhigh (Codex requests Ultrafast processing), or `--route backend-default` to leave model selection to the backend. `pal routes` prints the route table. An explicit `--model` or `--effort` wins over its route value; an explicit model without an explicit route does not inherit a route service tier. Claude requires an explicit Claude model when using either OpenAI route. PAL records the route and exports its identity in the worker environment; a worker's self-description is not evidence.
+
+Use `-m MODEL` and `--effort LEVEL` to override the selected route with settings supported by your installed backend and account. PAL records the requested route and does not treat a model's self-description as evidence. Use `--route backend-default` for backend configuration; Claude otherwise needs an explicit Claude model.
 
 ```sh
-pal start claude -n review -C /absolute/path/to/repo "Review the specified change."
+pal start claude -n review -C /absolute/path/to/repo --route backend-default "Review the specified change."
 pal start pi -n investigation -C /absolute/path/to/repo "Investigate the specified failure."
+pal start codex -n luna-worker -C /absolute/path/to/repo --route luna-fast "Implement and review the bounded task."
+pal start pi -n sol-worker -C /absolute/path/to/repo --route sol-xhigh "Handle the ambiguous task and advise on evidence."
+pal routes
 ```
+
+Every non-shared worker receives a review contract: understand the project's intent and acceptance criteria, make the smallest coherent change, inspect every changed line, run the narrowest authoritative check, critically review the result, and fix findings before reporting. If evidence is incomplete, it must give the lead an exact blocker and next action. Follow-up turns repeat this reminder. This is self-review and correction, not independent validation; the lead still inspects and accepts the candidate.
 
 Pi's optional `--agent NAME` reads a Markdown role from `PAL_PI_AGENTS_DIR`; no private or predefined roles are bundled. Claude's `--agent` uses a custom agent already configured in Claude Code.
 
@@ -130,7 +137,7 @@ This is **not a general hostile-code sandbox**. Other processes, other PAL_HOME 
 
 ### MCP equivalents
 
-`pal_start` accepts `shared: true` and `files: ["src/header.tsx"]`. The additional tools are:
+`pal_start` accepts `route: "luna-fast"` or `"sol-xhigh"`, plus `shared: true` and `files: ["src/header.tsx"]`. The additional tools are:
 
 | Tool | Inputs | Purpose |
 |---|---|---|
@@ -139,7 +146,7 @@ This is **not a general hostile-code sandbox**. Other processes, other PAL_HOME 
 | `pal_shared_release` | `cwd`, `name` | Lead releases an idle owner's files |
 | `pal_shared_recover` | `cwd` | Lead resumes a recorded application |
 
-Workers may read the board. Mutating shared commands reject invocation from a PAL worker environment. Existing MCP processes need reconnecting after upgrade to discover the new tools.
+`pal_routes` is read-only and returns the effective route table without starting a model call. Workers may read the board. Mutating shared commands reject invocation from a PAL worker environment. Existing MCP processes need reconnecting after upgrade to discover the new tools.
 
 ## MCP setup
 
@@ -166,7 +173,7 @@ For clients accepting JSON configuration:
 }
 ```
 
-Tools: `pal_start`, `pal_say`, `pal_wait`, `pal_read`, `pal_log`, `pal_diff`, `pal_list`, `pal_status`, `pal_stop`, and the four `pal_shared_*` tools above. Start long work with `wait: false`, then poll with bounded `pal_wait` calls. Blocking MCP waits are capped at 540 seconds; timeout leaves the backend running. Tool calls run in separate threads, so a wait does not serialize all client requests.
+Tools: `pal_start`, `pal_say`, `pal_wait`, `pal_read`, `pal_log`, `pal_diff`, `pal_list`, `pal_status`, `pal_stop`, `pal_routes`, and the four `pal_shared_*` tools above. Start long work with `wait: false`, then poll with bounded `pal_wait` calls. Blocking MCP waits are capped at 540 seconds; timeout leaves the backend running. Tool calls run in separate threads, so a wait does not serialize all client requests.
 
 ## Recommended agent instruction
 

@@ -4,7 +4,7 @@
 
 # AI Agent Delegation & MCP — PAL
 
-**Let your strongest AI plan and review. Give cheaper models the focused work.<br/>PAL connects them through persistent conversations in Codex, Claude Code, and Pi.**
+**Let a capable lead plan and review. Give Luna or Sol the focused work.<br/>PAL connects persistent OpenAI, Claude Code, and Pi sessions with explicit routing and evidence-led correction.**
 
 [Quickstart](#quickstart) · [How it works](#how-it-works) · [Commands](#commands) · [Assistant setup](#for-coding-assistants) · [Full guide](docs/usage.md)
 
@@ -19,7 +19,7 @@ Your best model doesn't need every search result, command log, and routine edit 
 PAL lets your lead agent hand off a clear job, get the result, inspect the evidence, and send corrections back to **the same helper, in the same conversation**.
 
 - **Keep the main conversation focused.** Helpers work in separate sessions. Retrieve their replies and inspect detailed logs when needed.
-- **Choose where to spend.** Use cheaper models for suitable work and reserve your strongest model for judgment. You choose the models; PAL doesn't route automatically.
+- **Choose where to spend.** PAL routes new Codex and Pi work to Luna xhigh Fast by default, with an explicit Sol xhigh alternate. You can override either setting and the lead still owns judgment.
 - **Keep ownership of quality.** Review the changes, check the behavior, and send weak work back for correction.
 
 Savings and quality depend on task scope, model choice, review, and retries. PAL enables this workflow; it does not guarantee an improvement or enforce a spending limit.
@@ -51,7 +51,17 @@ For real delegation, install and authenticate a backend CLI, then follow the [se
 2. **A helper works in its own session.** PAL preserves its native conversation, replies, command activity, and errors. Choose isolated worktrees or macOS shared mode: helpers read one checkout, reserve files, and propose edits for the lead.
 3. **The lead owns the result.** Inspect actual files and behavior, not just a “done” message. Continue the helper's conversation to fix problems, or reject the work.
 
-For example: your strongest model plans a refactor, a cheaper model handles a repetitive edit, and the lead inspects the integrated diff and runs the relevant checks. That division of work is something you direct, not an automatic quality gate.
+For example: a lead routes a bounded refactor to Luna xhigh Fast, the worker inspects and fixes its own result, and the lead still checks the integrated diff and runs the relevant checks. That division of work is explicit routing, not an automatic quality gate.
+
+## Cost-aware model routes
+
+PAL defaults new Codex and Pi sessions to `luna-fast`: GPT-5.6 Luna at xhigh, with Fast processing requested for Codex. Use `--route sol-xhigh` for GPT-5.6 Sol at xhigh; Codex requests its documented Ultrafast tier on that route. `pal routes` shows the resolved table. Explicit `--model` and `--effort` options remain authoritative. PAL records the selected route in metadata and tells workers to review, fix, and advise before they report completion; the lead still accepts or rejects the result.
+
+```sh
+pal start codex -n worker -C /path/to/repo --bg "Implement the bounded task and return evidence."
+pal start pi -n hard-worker -C /path/to/repo --route sol-xhigh --bg "Handle the ambiguous task and review your work."
+pal routes
+```
 
 ## One checkout, coordinated helpers
 
@@ -73,6 +83,7 @@ After [adding `pal` to your PATH](docs/usage.md#install):
 |---|---|
 | Give a helper a job | `pal start codex -n helper -C /path/to/repo "Your task"` |
 | Choose its model | Add `-m MODEL --effort LEVEL` supported by your backend |
+| Choose a route | Add `--route luna-fast`, `--route sol-xhigh`, or `--route backend-default` |
 | Keep working while it runs | Add `--bg`, then `pal wait helper --timeout 60` |
 | See what it actually did | `pal log helper` and inspect the repository |
 | Review changes | `pal diff helper --full`, plus staged, committed, and untracked changes |
@@ -125,9 +136,9 @@ The initial public export passed focused synthetic checks for worktree creation,
 
 | Integration | Evidence and boundary |
 |---|---|
-| Codex | Synthetic session and usage checks passed. Live model execution not retested for this release. |
+| Codex | Synthetic session, usage, route-resolution, and command-forwarding checks passed. Live model execution not retested for this release. |
 | Claude Code and Pi | CLI adapters included. Shared write-guard launch paths tested with synthetic subprocesses; live compatibility not retested. |
-| MCP | Local stdio discovery/listing checked. Every client version is not certified. |
+| MCP | Local stdio discovery/listing and read-only `pal_routes` checks passed. Every client version is not certified. |
 | Platforms | macOS checked. Linux intended but unverified. Native Windows unsupported. |
 
 No measured credit savings or quality uplift is claimed. Backend flags and event formats can change. [Tests and verification limits](docs/usage.md#development-and-verification).
